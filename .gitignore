@@ -1,0 +1,11 @@
+# OpenCode local config contains absolute paths — never commit
+opencode.jsonc
+opencode.json
+
+# Node
+node_modules/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
