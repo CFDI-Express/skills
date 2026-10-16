@@ -61,7 +61,7 @@ curl https://api.cfdi.express/v1/balance \
   `pac_unavailable` (503, safe to retry with same key), `internal_error` (500).
 - **Pagination**: cursor-based. `limit` (max 100) + `starting_after=<last id>`
   while `has_more` is `true`.
-- **Limits**: 300 req/min per account; 1 MB body; 500 concepts per invoice.
+- **Limits**: 300 req/min per account; 1 MB body; 1,000 concepts per invoice.
 - **Signed URLs**: XML/PDF/ZIP/acknowledgment URLs expire after 15 minutes —
   refetch the resource when you need fresh ones.
 - **Credits**: each stamp reserves 1 credit and commits it on UUID issuance;
