@@ -128,6 +128,29 @@ For PPD invoices, stamp a REP per payment received:
 `subcode: "overpay"`. A PPD invoice with live REPs can't be cancelled until
 its REPs are (`cancel_reps_first`); cancelling a REP restores the balance.
 
+**One payment settling several invoices** → one REP, not one per invoice:
+`POST /v1/payments` stamps a single CFDI with one DoctoRelacionado per invoice.
+The invoices must share issuer, receiver RFC and currency; `monto` is optional
+and, if sent, must equal the sum of `importePagado`. Each invoice gets its own
+`numParcialidad` and saldos (returned in `documents[]`).
+
+```json
+POST /v1/payments
+{
+  "formaPago": "03",
+  "fechaPago": "2026-10-30T12:00:00",
+  "monto": 5.80,
+  "documents": [
+    { "invoiceId": "inv_A", "importePagado": 2.32 },
+    { "invoiceId": "inv_B", "importePagado": 2.32 },
+    { "invoiceId": "inv_C", "importePagado": 1.16 }
+  ]
+}
+```
+
+`GET /v1/payments?invoiceId=` finds every REP relating an invoice, and
+cancelling the REP restores each invoice's balance.
+
 ## Payroll (nómina)
 
 `POST /v1/nominas` stamps one recibo de nómina (CFDI N + complemento Nómina
@@ -172,7 +195,7 @@ endpoint returns, with file URLs presigned per delivery attempt.
 |---|---|
 | Invoices | `POST /v1/invoices` · `GET /v1/invoices` · `GET /v1/invoices/{id}` · `POST /v1/invoices/{id}/cancel` |
 | Credit notes | `POST /v1/credit_notes` (read, list and cancel through the invoice endpoints) |
-| Payments (REP) | `POST /v1/invoices/{id}/payments` · `GET /v1/payments` · `GET /v1/payments/{id}` · `POST /v1/payments/{id}/cancel` |
+| Payments (REP) | `POST /v1/invoices/{id}/payments` · `POST /v1/payments` (several invoices) · `GET /v1/payments` · `GET /v1/payments/{id}` · `POST /v1/payments/{id}/cancel` |
 | Nómina (payroll) | `POST /v1/nominas` · `GET /v1/nominas` (filters `employeeRfc`, `fechaPagoFrom/To`) · `GET /v1/nominas/{id}` · `POST /v1/nominas/{id}/cancel` |
 | Retenciones | `POST /v1/retenciones` · `GET /v1/retenciones` (filters `receiverRfc`, `ejercicio`, `mes`) · `GET /v1/retenciones/{id}` · `POST /v1/retenciones/{id}/cancel` |
 | Issuers | `GET/POST /v1/merchants` · `GET/PATCH/DELETE /v1/merchants/{id}` · `POST /v1/merchants/{id}/archive` · `POST /v1/merchants/{id}/unarchive` · `POST/PUT/GET/DELETE /v1/merchants/{id}/csd` · `PUT/DELETE /v1/merchants/{id}/logo` |
