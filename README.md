@@ -1,6 +1,6 @@
 # CFDI Express Skills
 
-AI agent skill for integrating the [CFDI Express API](https://cfdi.express/docs/api) — a REST API for Mexican CFDI 4.0 (PUE/PPD/global invoices, credit notes, REP payment complements, nómina, retenciones for digital platforms, cancellations and signed webhooks) with Stripe-style conventions.
+AI agent skill for integrating the [CFDI Express API](https://cfdi.express/docs/api) — a REST API for Mexican CFDI 4.0 (PUE/PPD/global invoices in MXN or foreign currency, credit notes, REP payment complements, nómina, retenciones for digital platforms, cancellations and signed webhooks) with Stripe-style conventions.
 
 Install it and your AI assistant gets the full context to implement the API in your system: auth, idempotency, error handling, the endpoint map and pointers to the live docs.
 
