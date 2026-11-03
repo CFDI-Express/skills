@@ -2,8 +2,8 @@
 name: cfdi-express-api
 description: >-
   Integrate the CFDI Express REST API to issue Mexican CFDI 4.0 documents from
-  any system: PUE/PPD/global invoices, credit notes, payment complements (REP /
-  Pagos 2.0), payroll receipts (nómina / Nómina 1.2), CFDI de Retenciones 2.0
+  any system: PUE/PPD/global invoices in MXN or foreign currency (USD, EUR, …
+  with TipoCambio), credit notes, payment complements (REP / Pagos 2.0), payroll receipts (nómina / Nómina 1.2), CFDI de Retenciones 2.0
   for digital platforms (plataformas tecnológicas), cancellations with SAT
   acknowledgment, issuer (RFC/CSD) management, SAT catalogs, prepaid balance
   and signed webhooks. Stripe-style conventions. Use when the user needs to
@@ -32,7 +32,7 @@ $1 MXN per stamp, prepaid balance, free unlimited sandbox.
 - Interactive docs (try endpoints live): https://api.cfdi.express/docs
 - Agent-friendly reference index: https://cfdi.express/docs/api/llms.txt —
   includes a section per feature release (serie, fecha, pedimentos, foreign
-  receptor, retenciones, lineDecimals…)
+  receptor, retenciones, lineDecimals, foreign currency…)
 - Per-endpoint markdown: append `/llms.txt` to any guide URL,
   e.g. https://cfdi.express/docs/api/timbrar-factura/llms.txt
 
@@ -110,8 +110,17 @@ All on `POST /v1/invoices`; most also on `POST /v1/credit_notes`:
   `YYYY-MM-DDTHH:mm:ss`.
 - `items[].pedimentos` (InformacionAduanera) and `items[].cuentasPrediales`
   (CuentaPredial, for leases).
-- `lineDecimals: 6`: six-decimal concepto amounts so tax-inclusive prices
-  close exactly (document totals still round to 2).
+- `lineDecimals: 6` (default `2`, since v1.44.0): concepto `ValorUnitario`,
+  `Importe` and tax `Base`/`Importe` keep 6 decimals (Anexo 20 allows up to
+  6); `SubTotal`, `Total` and comprobante tax totals still round to 2. Pair it
+  with `pricesIncludeTax: true` to make tax-inclusive prices close exactly:
+  674.00 at IVA 16% → Importe `581.034483` + IVA `92.965517`, Total `674.00`.
+  With 2 decimals the same line stamps 581.03 + 92.96 = Total `673.99`, a
+  centavo short of what the customer paid. It does not change the
+  currency: amounts are still in `currency`, and a REP prorates the stamped
+  bases, so it works with any `lineDecimals`.
+- **Foreign currency** (since v1.49.0): `currency` (c_Moneda, default `MXN`)
+  + `exchangeRate` (TipoCambio: MXN per 1 unit, ≤ 6 decimals). See below.
 - `logoUrl`: per-document PDF logo overriding the issuer's.
 
 Credit notes (`POST /v1/credit_notes`) relate to the original via
@@ -119,11 +128,62 @@ Credit notes (`POST /v1/credit_notes`) relate to the original via
 `receiver` (stamped elsewhere). They are invoice resources with
 `kind: "credit_note"`.
 
+## Foreign currency (USD, EUR, …)
+
+Since v1.49.0 an invoice can be stamped in a currency other than pesos:
+
+```json
+POST /v1/invoices
+{
+  "merchantId": "mer_...",
+  "metodoPago": "PUE",
+  "formaPago": "03",
+  "usoCfdi": "G03",
+  "currency": "USD",
+  "exchangeRate": 18.6140,
+  "receiver": { "rfc": "URE180429TM6", "name": "UNIVERSIDAD ROBOTICA ESPAÑOLA", "zip": "86991", "regimenFiscal": "601" },
+  "items": [{ "productCode": "81112101", "unitCode": "E48", "description": "Servicio", "quantity": 1, "unitPrice": 116, "ivaRate": 0.16 }],
+  "pricesIncludeTax": true
+}
+```
+
+- `currency`: MXN, USD, EUR, CAD, GBP, CHF, AUD, NZD, CNY, HKD, SGD, SEK, NOK,
+  DKK, BRL, ARS, COP, PEN or GTQ (2-decimal c_Moneda keys); anything else is
+  `400`. Stamped as `Moneda`.
+- `exchangeRate`: Mexican pesos per 1 unit on the document date, up to 6
+  decimals; required when `currency` isn't MXN, omitted (or `1`) for MXN —
+  MXN with another value is `400`. Stamped as `TipoCambio` (omitted for MXN).
+  Use the Banxico FIX published in the DOF for USD, Banxico's equivalence
+  table for other currencies. The SAT doesn't range-check it yet (CFDI40118
+  isn't in force), so a wrong rate is stamped as sent — it's the issuer's
+  responsibility; never hard-code or guess it.
+- **Every amount is in `currency`**: `unitPrice`, `shipping`, `cartDiscount`
+  and the resource's `subtotal`/`total`/`saldoPendiente`. Nothing is converted
+  at stamping. The resource returns `currency` and `exchangeRate` (`1` for
+  MXN, including documents stamped before v1.49.0); the PDF shows the rate
+  and the MXN equivalent.
+- Global invoices (`XAXX010101000` + `informacionGlobal`) accept any
+  supported currency too.
+- **Credit notes** take the related invoice's currency (`relatedInvoiceId`:
+  omit `currency` or send the same one — another is `400`; `relatedUuid`:
+  defaults to MXN) and their own `exchangeRate` of the credit note date.
+- **REPs** are in the related invoices' currency: `monto`/`importePagado` in
+  that currency, plus `exchangeRate` = TipoCambioP **of the payment date**
+  (not the invoice's), required when the invoices aren't MXN. The API emits
+  `EquivalenciaDR="1"` and converts the Pagos 2.0 `Totales` to MXN. Paying an
+  invoice in a different currency (e.g. a USD invoice in pesos) isn't
+  supported yet.
+- **Behavior change in v1.49.0**: `currency`/`exchangeRate` used to be
+  ignored and the CFDI stamped in MXN. They are honored now, so
+  `"currency": "USD"` without `exchangeRate` returns `400` instead of
+  silently stamping pesos.
+
 ## Payment complements (REP)
 
 For PPD invoices, stamp a REP per payment received:
 `POST /v1/invoices/{id}/payments` with `monto`, the real `formaPago` (not
-`99`) and optional `fechaPago`. `numParcialidad`, `saldoAnterior` and
+`99`), optional `fechaPago` and, for non-MXN invoices, `exchangeRate` of the
+payment date. `numParcialidad`, `saldoAnterior` and
 `saldoInsoluto` are computed server-side; overpaying returns `400` with
 `subcode: "overpay"`. A PPD invoice with live REPs can't be cancelled until
 its REPs are (`cancel_reps_first`); cancelling a REP restores the balance.
