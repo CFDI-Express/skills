@@ -28,6 +28,7 @@ Everything an integrator needs:
 - Base URL, bearer-key auth and `sk_test_` vs `sk_live_` modes
 - Idempotency keys, cursor pagination, RFC 7807 error codes, rate limits
 - The 4-step integration flow (issuer → CSD → stamp → deliver XML/PDF)
+- Previews: validate and render any invoice, credit note, REP or nómina as a watermarked PDF before stamping it
 - Full v1 endpoint map for invoices, credit notes, REPs, nómina, retenciones, issuers, SAT catalogs, webhooks and billing
 - Invoice options that trip integrators up: global vs nominativa `XAXX010101000`, foreign receptor, serie/folio, back-dated `fecha`, pedimentos, cuentas prediales, 6-decimal conceptos
 - Webhook signature verification and delivery semantics

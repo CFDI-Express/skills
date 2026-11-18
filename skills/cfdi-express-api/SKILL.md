@@ -9,9 +9,9 @@ description: >-
   and signed webhooks. Stripe-style conventions. Use when the user needs to
   stamp, list, fetch or cancel CFDIs (including recibos de nómina and
   constancias de retenciones), register issuers or upload CSD certificates,
-  search SAT product/unit/usos/regimen/nómina/retenciones codes, check balance
-  and usage, or receive webhooks about stamped documents against
-  api.cfdi.express.
+  search SAT product/unit/usos/regimen/nómina/retenciones codes, preview a
+  document (watermarked PDF) before stamping it, check balance and usage, or
+  receive webhooks about stamped documents against api.cfdi.express.
 metadata:
   short-description: Integrate the CFDI Express invoicing REST API
 ---
@@ -72,8 +72,8 @@ curl https://api.cfdi.express/v1/balance \
   `insufficient_credits` / `monthly_limit_reached` (402),
   `request_in_flight` (409), `idempotency_key_reuse` / `sat_rejected` (422),
   `rate_limited` (429, honor `Retry-After`),
-  `pac_unavailable` / `billing_unavailable` (503, safe to retry with the same
-  key), `internal_error` (500).
+  `pac_unavailable` / `billing_unavailable` / `pdf_unavailable` (503, safe to
+  retry with the same key), `internal_error` (500).
 - **Pagination**: cursor-based. `limit` (max 100) + `starting_after=<last id>`
   while `has_more` is `true`.
 - **Limits**: 300 req/min per account; 1 MB body; 1,000 concepts per invoice.
@@ -91,6 +91,55 @@ curl https://api.cfdi.express/v1/balance \
 3. Stamp: `POST /v1/invoices` (the tax engine computes IVA/IEPS/retentions)
 4. Deliver XML/PDF via signed URLs from `GET /v1/invoices/{id}`, or receive
    them in an `invoice.stamped` webhook
+
+## Previews — show the document before stamping it
+
+Since v1.53.0 (invoices) and v1.54.0 (credit notes, REPs, nómina) every
+stamping endpoint has a preview twin. It takes **the same body**, runs **the
+same validations**, and builds the CFDI exactly as it would be stamped — but
+never stamps, charges, reserves a folio or stores anything (REP previews
+don't touch invoice saldos). Use it to let a person approve a document in
+your app before you spend a timbre.
+
+| Stamps | Preview (JSON) | Preview (PDF) |
+|---|---|---|
+| `POST /v1/invoices` | `POST /v1/invoices/preview` | `POST /v1/invoices/preview/pdf` |
+| `POST /v1/credit_notes` | `POST /v1/credit_notes/preview` | `POST /v1/credit_notes/preview/pdf` |
+| `POST /v1/payments` | `POST /v1/payments/preview` | `POST /v1/payments/preview/pdf` |
+| `POST /v1/nominas` | `POST /v1/nominas/preview` | `POST /v1/nominas/preview/pdf` |
+
+- **JSON preview** returns the computed totals (`subtotal`, `discount`,
+  `total`; `monto` and `documents[]` with parcialidad and saldos for REPs;
+  percepciones/deducciones/neto for nómina), the receiver, `cfdi` (the CFDI
+  data as it would be sent to the PAC, unsealed) and `html`: the printed
+  representation — same template as the stamped PDF — watermarked `PREVIEW`,
+  with placeholders for the UUID, seals and QR. Render `html` in your app
+  (an iframe or sandboxed container) or show your own summary.
+- **PDF preview** returns the watermarked PDF (`application/pdf`,
+  `Content-Disposition: attachment`). With `?delivery=url` it returns JSON
+  `{ object, filename, url, expiresAt }` with a temporary link (~15 min)
+  instead — useful when the client can't receive bytes.
+- **No `Idempotency-Key`** and no charge: preview as often as you need.
+  Previews count toward the rate limit like any request.
+- A preview that passes means the stamp won't fail on CFDI Express rules; the
+  SAT can still reject at stamping (`sat_rejected`).
+- `folio` is **projected** (`folioIsProjected: true`) unless you send your own
+  `folio`: other documents stamped first move it. REP folios are always
+  assigned at stamping. `fecha` is the preview time unless the body sets one.
+- REP previews use the `POST /v1/payments` body; a single invoice is one
+  `documents` entry.
+- Retenciones have no preview yet.
+
+Typical flow: build the body → `POST …/preview` → show `html` (or the PDF) →
+on approval send **the same body** to the stamping endpoint with your
+`Idempotency-Key`.
+
+```bash
+curl -X POST https://api.cfdi.express/v1/invoices/preview/pdf \
+  -H "Authorization: Bearer sk_test_..." \
+  -H "Content-Type: application/json" \
+  -d @invoice.json -o preview.pdf
+```
 
 ## Invoices — options worth knowing
 
@@ -253,6 +302,7 @@ endpoint returns, with file URLs presigned per delivery attempt.
 
 | Resource | Endpoints |
 |---|---|
+| Previews | `POST /v1/{invoices,credit_notes,payments,nominas}/preview` · `POST /v1/{invoices,credit_notes,payments,nominas}/preview/pdf` (`?delivery=file\|url`) |
 | Invoices | `POST /v1/invoices` · `GET /v1/invoices` · `GET /v1/invoices/{id}` · `POST /v1/invoices/{id}/cancel` |
 | Credit notes | `POST /v1/credit_notes` (read, list and cancel through the invoice endpoints) |
 | Payments (REP) | `POST /v1/invoices/{id}/payments` · `POST /v1/payments` (several invoices) · `GET /v1/payments` · `GET /v1/payments/{id}` · `POST /v1/payments/{id}/cancel` |
@@ -273,8 +323,16 @@ Guide for each endpoint: https://cfdi.express/docs/api (append `/llms.txt` for m
 ## Alternative for AI agents: MCP
 
 Instead of raw REST, agents can connect to the MCP server at
-`https://api.cfdi.express/mcp` (sandbox: `/mcp/test`): 22 tools covering
+`https://api.cfdi.express/mcp` (sandbox: `/mcp/test`): 26 tools covering
 invoices, credit notes, REPs, nómina, retenciones, cancellations, queries,
 catalogs and balance, plus report prompts (`cierre_de_mes`,
 `cuentas_por_cobrar`). Auth via API key or OAuth 2.1; each OAuth connection
 is bound to one workspace. Guide: https://cfdi.express/docs/api/mcp
+
+`preview_invoice`, `preview_credit_note`, `preview_payment` and
+`preview_nomina` take the `create_*` arguments and, in hosts that support MCP
+Apps (Claude, ChatGPT), render the watermarked document in the chat with
+**Autorizar y timbrar**, **Descargar PDF** and **Pedir cambios**. The button
+stamps with the preview's `idempotency_key`; when the user approves in the
+chat instead, call `create_*` with the same arguments plus that key, so the
+document is stamped once.
